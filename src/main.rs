@@ -27,7 +27,7 @@ impl DirNode {
                         };
                         children.push(child);
                     } else {
-                        println!("{:#?}", path);
+                        println!("{}", path.display());
                     }
                 }
                 self.children = Some(children);
@@ -40,19 +40,27 @@ impl DirNode {
 
 fn pick_one(node: &mut DirNode) -> bool {
     let children_ = node.get_children();
-    if children_.is_err() || children_.as_ref().unwrap().is_empty() {
-        println!("{:#?}", node.name);
-        false
-    } else {
-        let children = children_.unwrap();
-        let mut rng = thread_rng();
-        let child_idx = rng.gen_range(0, children.len());
-        let child = &mut children[child_idx];
-        if !pick_one(child) {
-            println!("{:?}", child.name);
-            children.remove(child_idx);
+    match children_ {
+        Ok(children) => {
+            if children.is_empty() {
+                println!("{}", node.name.display());
+                false
+            } else {
+                let mut rng = thread_rng();
+                let child_idx = rng.gen_range(0, children.len());
+                let child = &mut children[child_idx];
+                if !pick_one(child) {
+                    println!("{}", child.name.display());
+                    children.remove(child_idx);
+                }
+                true
+            }
         }
-        true
+        Err(error) => {
+            eprintln!("{} : {}", node.name.display(), error);
+            println!("{}", node.name.display());
+            false
+        }
     }
 }
 

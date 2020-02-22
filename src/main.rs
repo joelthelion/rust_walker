@@ -18,9 +18,11 @@ impl DirNode {
         match &mut self.children {
             None => {
                 let mut children = Vec::new();
-                for i in fs::read_dir(&self.name)? {
-                    let path = i?.path();
-                    if path.is_dir() {
+                for i_ in fs::read_dir(&self.name)? {
+                    let i = i_?;
+                    let is_symlink = i.file_type()?.is_symlink();
+                    let path = i.path();
+                    if !is_symlink && path.is_dir() {
                         let child = DirNode {
                             name: path,
                             children: None,

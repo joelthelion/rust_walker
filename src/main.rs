@@ -11,25 +11,23 @@ use std::vec::Vec;
 use indexmap::IndexMap;
 
 struct DirNode {
-    name: PathBuf,
     children: Option<IndexMap<PathBuf,DirNode>>,
 }
 
 impl DirNode {
-    fn get_children(&mut self) -> std::io::Result<&mut IndexMap<PathBuf, DirNode>> {
+    fn get_children(&mut self, path: &PathBuf) -> std::io::Result<&mut IndexMap<PathBuf, DirNode>> {
         match &mut self.children {
             None => {
                 let mut children = IndexMap::new();
-                for i_ in fs::read_dir(&self.name)? {
+                for i_ in fs::read_dir(path)? {
                     let i = i_?;
                     let is_symlink = i.file_type()?.is_symlink();
                     let path = i.path();
                     if !is_symlink && path.is_dir() {
                         let child = DirNode {
-                            name: path,
                             children: None,
                         };
-                        children.insert(child.name.clone(), child);
+                        children.insert(path, child);
                     } else {
                         println!("{}", path.display());
                     }
@@ -42,41 +40,47 @@ impl DirNode {
     }
 }
 
-fn pick_one(node: &mut DirNode) -> bool {
-    let children_ = node.get_children();
+enum PickOneResult {
+    OK,
+    Empty,
+    Error(std::io::Error)
+}
+
+fn pick_one(path: &PathBuf, node: &mut DirNode) -> PickOneResult {
+    let children_ = node.get_children(path);
     match children_ {
         Ok(children) => {
             if children.is_empty() {
-                println!("{}", node.name.display());
-                false
+                PickOneResult::Empty
             } else {
                 let mut rng = thread_rng();
                 let child_idx = rng.gen_range(0, children.len());
-                let (_, child) = children.get_index_mut(child_idx).unwrap();
-                if !pick_one(child) {
-                    println!("{}", child.name.display());
-                    children.swap_remove_index(child_idx);
+                let (child_name, child) = children.get_index_mut(child_idx).unwrap();
+                match pick_one(child_name, child) {
+                    PickOneResult::OK => {}
+                    PickOneResult::Empty => {
+                        println!("{}", child_name.display());
+                        children.swap_remove_index(child_idx);
+                    }
+                    PickOneResult::Error(err) => {
+                        eprintln!("{} : {}", child_name.display(), err);
+                        println!("{}", child_name.display());
+                        children.swap_remove_index(child_idx);
+                    }
                 }
-                true
+                PickOneResult::OK
             }
         }
-        Err(error) => {
-            eprintln!("{} : {}", node.name.display(), error);
-            println!("{}", node.name.display());
-            false
-        }
+        Err(error) => PickOneResult::Error(error)
     }
 }
 
-fn random_walk(path: &str) {
+fn random_walk(path_: &str) {
     let mut node = DirNode {
-        name: PathBuf::from(path),
         children: None,
     };
-    loop {
-        if !pick_one(&mut node) {
-            break;
-        }
+    let path : PathBuf = PathBuf::from(path_);
+    while let PickOneResult::OK =  pick_one(&path, &mut node) {
     }
 }
 

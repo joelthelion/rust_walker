@@ -7,17 +7,19 @@ use std::fs;
 use std::option::Option;
 use std::path::PathBuf;
 use std::vec::Vec;
+// use std::collections::HashMap;
+use indexmap::IndexMap;
 
 struct DirNode {
     name: PathBuf,
-    children: Option<Vec<DirNode>>,
+    children: Option<IndexMap<PathBuf,DirNode>>,
 }
 
 impl DirNode {
-    fn get_children(&mut self) -> std::io::Result<&mut Vec<DirNode>> {
+    fn get_children(&mut self) -> std::io::Result<&mut IndexMap<PathBuf, DirNode>> {
         match &mut self.children {
             None => {
-                let mut children = Vec::new();
+                let mut children = IndexMap::new();
                 for i_ in fs::read_dir(&self.name)? {
                     let i = i_?;
                     let is_symlink = i.file_type()?.is_symlink();
@@ -27,7 +29,7 @@ impl DirNode {
                             name: path,
                             children: None,
                         };
-                        children.push(child);
+                        children.insert(child.name.clone(), child);
                     } else {
                         println!("{}", path.display());
                     }
@@ -50,10 +52,10 @@ fn pick_one(node: &mut DirNode) -> bool {
             } else {
                 let mut rng = thread_rng();
                 let child_idx = rng.gen_range(0, children.len());
-                let child = &mut children[child_idx];
+                let (_, child) = children.get_index_mut(child_idx).unwrap();
                 if !pick_one(child) {
                     println!("{}", child.name.display());
-                    children.remove(child_idx);
+                    children.swap_remove_index(child_idx);
                 }
                 true
             }

@@ -11,7 +11,7 @@ use std::vec::Vec;
 use indexmap::IndexMap;
 
 struct DirNode {
-    children: Option<IndexMap<PathBuf,DirNode>>,
+    children: Option<IndexMap<PathBuf, DirNode>>,
 }
 
 impl DirNode {
@@ -24,9 +24,7 @@ impl DirNode {
                     let is_symlink = i.file_type()?.is_symlink();
                     let path = i.path();
                     if !is_symlink && path.is_dir() {
-                        let child = DirNode {
-                            children: None,
-                        };
+                        let child = DirNode { children: None };
                         children.insert(path, child);
                     } else {
                         println!("{}", path.display());
@@ -43,7 +41,7 @@ impl DirNode {
 enum PickOneResult {
     OK,
     Empty,
-    Error(std::io::Error)
+    Error(std::io::Error),
 }
 
 fn pick_one(path: &PathBuf, node: &mut DirNode) -> PickOneResult {
@@ -71,17 +69,14 @@ fn pick_one(path: &PathBuf, node: &mut DirNode) -> PickOneResult {
                 PickOneResult::OK
             }
         }
-        Err(error) => PickOneResult::Error(error)
+        Err(error) => PickOneResult::Error(error),
     }
 }
 
 fn random_walk(path_: &str) {
-    let mut node = DirNode {
-        children: None,
-    };
-    let path : PathBuf = PathBuf::from(path_);
-    while let PickOneResult::OK =  pick_one(&path, &mut node) {
-    }
+    let mut node = DirNode { children: None };
+    let path: PathBuf = PathBuf::from(path_);
+    while let PickOneResult::OK = pick_one(&path, &mut node) {}
 }
 
 fn main() {

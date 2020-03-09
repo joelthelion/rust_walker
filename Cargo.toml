@@ -9,3 +9,11 @@ edition = "2018"
 [dependencies]
 rand = "*"
 indexmap = "*"
+
+[[bin]]
+name = "legacy"
+path = "src/legacy.rs"
+
+[[bin]]
+name = "rust_walker"
+path = "src/rust_walker.rs"

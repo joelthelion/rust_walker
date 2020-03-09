@@ -9,6 +9,8 @@ use std::path::PathBuf;
 use std::vec::Vec;
 // use std::collections::HashMap;
 use indexmap::IndexMap;
+use tokio::net::TcpListener;
+use tokio::stream::StreamExt;
 
 struct DirNode {
     children: Option<IndexMap<PathBuf, DirNode>>,
@@ -44,7 +46,7 @@ enum PickOneResult {
     Error(std::io::Error),
 }
 
-fn pick_one(path: &PathBuf, node: &mut DirNode) -> PickOneResult {
+async fn pick_one(path: &PathBuf, node: &mut DirNode) -> PickOneResult {
     let children_ = node.get_children(path);
     match children_ {
         Ok(children) => {
@@ -54,7 +56,7 @@ fn pick_one(path: &PathBuf, node: &mut DirNode) -> PickOneResult {
                 let mut rng = thread_rng();
                 let child_idx = rng.gen_range(0, children.len());
                 let (child_name, child) = children.get_index_mut(child_idx).unwrap();
-                match pick_one(child_name, child) {
+                match pick_one(child_name, child).await {
                     PickOneResult::OK => {}
                     PickOneResult::Empty => {
                         println!("{}", child_name.display());
@@ -73,14 +75,23 @@ fn pick_one(path: &PathBuf, node: &mut DirNode) -> PickOneResult {
     }
 }
 
-fn random_walk(path_: &str) {
+async fn random_walk(path_: &str) {
     let mut node = DirNode { children: None };
     let path: PathBuf = PathBuf::from(path_);
-    while let PickOneResult::OK = pick_one(&path, &mut node) {}
+    while let PickOneResult::OK = pick_one(&path, &mut node).await {}
 }
 
-fn main() {
+// fn main() {
+//     let args: Vec<String> = env::args().collect();
+//     let dir = if args.len() >= 2 { &args[1] } else { "." };
+//     random_walk(dir);
+// }
+
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     let dir = if args.len() >= 2 { &args[1] } else { "." };
-    random_walk(dir);
+    random_walk(dir).await;
+    Ok(())
 }

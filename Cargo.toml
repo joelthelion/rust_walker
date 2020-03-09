@@ -9,6 +9,7 @@ edition = "2018"
 [dependencies]
 rand = "*"
 indexmap = "*"
+tokio = { version = "*", features = ["full"] }
 
 [[bin]]
 name = "legacy"

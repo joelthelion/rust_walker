@@ -1,3 +1,3 @@
 map !! iprintln!(
-set makeprg=cargo\ test
+set makeprg=cargo\ build
 set wildignore+=target

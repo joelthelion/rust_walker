@@ -3,27 +3,26 @@ extern crate rand;
 use rand::thread_rng;
 use rand::Rng;
 use std::env;
-use std::fs;
 use std::option::Option;
 use std::path::PathBuf;
 use std::vec::Vec;
-// use std::collections::HashMap;
 use indexmap::IndexMap;
-use tokio::net::TcpListener;
 use tokio::stream::StreamExt;
+use futures::future::{BoxFuture, FutureExt};
 
 struct DirNode {
     children: Option<IndexMap<PathBuf, DirNode>>,
 }
 
 impl DirNode {
-    fn get_children(&mut self, path: &PathBuf) -> std::io::Result<&mut IndexMap<PathBuf, DirNode>> {
+    async fn get_children(&mut self, path: &PathBuf) -> tokio::io::Result<&mut IndexMap<PathBuf, DirNode>> {
         match &mut self.children {
             None => {
                 let mut children = IndexMap::new();
-                for i_ in fs::read_dir(path)? {
+                let mut entries = tokio::fs::read_dir(path).await?;
+                while let Some(i_) =  entries.next().await {
                     let i = i_?;
-                    let is_symlink = i.file_type()?.is_symlink();
+                    let is_symlink = i.file_type().await?.is_symlink();
                     let path = i.path();
                     if !is_symlink && path.is_dir() {
                         let child = DirNode { children: None };
@@ -46,33 +45,38 @@ enum PickOneResult {
     Error(std::io::Error),
 }
 
-async fn pick_one(path: &PathBuf, node: &mut DirNode) -> PickOneResult {
-    let children_ = node.get_children(path);
-    match children_ {
-        Ok(children) => {
-            if children.is_empty() {
-                PickOneResult::Empty
-            } else {
-                let mut rng = thread_rng();
-                let child_idx = rng.gen_range(0, children.len());
-                let (child_name, child) = children.get_index_mut(child_idx).unwrap();
-                match pick_one(child_name, child).await {
-                    PickOneResult::OK => {}
-                    PickOneResult::Empty => {
-                        println!("{}", child_name.display());
-                        children.swap_remove_index(child_idx);
+fn pick_one<'a>(path: &'a PathBuf, node: &'a mut DirNode) -> BoxFuture<'a, PickOneResult> {
+    async move {
+        let children_ = node.get_children(path).await;
+        match children_ {
+            Ok(children) => {
+                if children.is_empty() {
+                    PickOneResult::Empty
+                } else {
+                    let child_idx;
+                    {
+                        let mut rng = thread_rng();
+                        child_idx = rng.gen_range(0, children.len());
                     }
-                    PickOneResult::Error(err) => {
-                        eprintln!("{} : {}", child_name.display(), err);
-                        println!("{}", child_name.display());
-                        children.swap_remove_index(child_idx);
+                    let (child_name, child) = children.get_index_mut(child_idx).unwrap();
+                    match pick_one(child_name, child).await {
+                        PickOneResult::OK => {}
+                        PickOneResult::Empty => {
+                            println!("{}", child_name.display());
+                            children.swap_remove_index(child_idx);
+                        }
+                        PickOneResult::Error(err) => {
+                            eprintln!("{} : {}", child_name.display(), err);
+                            println!("{}", child_name.display());
+                            children.swap_remove_index(child_idx);
+                        }
                     }
+                    PickOneResult::OK
                 }
-                PickOneResult::OK
             }
+            Err(error) => PickOneResult::Error(error),
         }
-        Err(error) => PickOneResult::Error(error),
-    }
+    }.boxed()
 }
 
 async fn random_walk(path_: &str) {

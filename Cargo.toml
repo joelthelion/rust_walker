@@ -10,6 +10,7 @@ edition = "2018"
 rand = "*"
 indexmap = "*"
 tokio = { version = "*", features = ["full"] }
+futures = "*"
 
 [[bin]]
 name = "legacy"

@@ -3,38 +3,53 @@ extern crate rand;
 use rand::thread_rng;
 use rand::Rng;
 use std::env;
-use std::option::Option;
+// use std::option::Option;
 use std::path::PathBuf;
 use std::vec::Vec;
 use indexmap::IndexMap;
 use tokio::stream::StreamExt;
-use futures::future::{BoxFuture, FutureExt};
+use futures::future::{BoxFuture, FutureExt, Future, Shared};
+
+type ChildrenType = IndexMap<PathBuf, DirNode>;
+// type ChildrenFuture = u64;
+
+enum NodeType {
+        Nothing,
+        Pending(Box<dyn Future<Output = tokio::io::Result<ChildrenType>>>), // FIXME
+        Children(ChildrenType),
+    }
+
 
 struct DirNode {
-    children: Option<IndexMap<PathBuf, DirNode>>,
+    children: NodeType
 }
 
 impl DirNode {
-    async fn get_children(&mut self, path: &PathBuf) -> tokio::io::Result<&mut IndexMap<PathBuf, DirNode>> {
-        match &mut self.children {
-            None => {
-                let mut children = IndexMap::new();
-                let mut entries = tokio::fs::read_dir(path).await?;
-                while let Some(i_) =  entries.next().await {
-                    let i = i_?;
-                    let is_symlink = i.file_type().await?.is_symlink();
-                    let path = i.path();
-                    if !is_symlink && path.is_dir() {
-                        let child = DirNode { children: None };
-                        children.insert(path, child);
-                    } else {
-                        println!("{}", path.display());
-                    }
-                }
-                self.children = Some(children);
-                Ok(self.children.as_mut().unwrap())
+    async fn _get_children(&mut self, path: &PathBuf) -> tokio::io::Result<ChildrenType> {
+        let mut children = IndexMap::new();
+        let mut entries = tokio::fs::read_dir(path).await?;
+        while let Some(i_) =  entries.next().await {
+            let i = i_?;
+            let is_symlink = i.file_type().await?.is_symlink();
+            let path = i.path();
+            if !is_symlink && path.is_dir() {
+                let child = DirNode { children: NodeType::Nothing };
+                children.insert(path, child);
+            } else {
+                println!("{}", path.display());
             }
-            Some(_) => Ok(self.children.as_mut().unwrap()),
+        }
+        Ok(children)
+    }
+    async fn get_children(&mut self, path: &PathBuf) -> tokio::io::Result<NodeType> {
+        match &mut self.children {
+            NodeType::Nothing => {
+                let children = self._get_children(path);
+                self.children = NodeType::Pending(Box::new(children.shared())); //FIXME race condition
+                Ok(self.children)
+            }
+            NodeType::Pending(f) => f.await,
+            NodeType::Children(_) => Ok(self.children.as_mut().unwrap()),
         }
     }
 }
@@ -82,6 +97,8 @@ fn pick_one<'a>(path: &'a PathBuf, node: &'a mut DirNode) -> BoxFuture<'a, PickO
 async fn random_walk(path_: &str) {
     let mut node = DirNode { children: None };
     let path: PathBuf = PathBuf::from(path_);
+    // while let PickOneResult::OK = pick_one(&path, &mut node).await {}
+    let nodeb = node.clone();
     while let PickOneResult::OK = pick_one(&path, &mut node).await {}
 }
 

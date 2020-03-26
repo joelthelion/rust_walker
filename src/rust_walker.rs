@@ -7,7 +7,7 @@ use std::env;
 use std::path::PathBuf;
 use std::vec::Vec;
 use indexmap::IndexMap;
-use tokio::stream::StreamExt;
+use futures::stream::{Stream, StreamExt};
 use futures::future::{FutureExt, Future};
 use futures::stream::futures_unordered::FuturesUnordered;
 use tokio::task::JoinHandle;
@@ -16,12 +16,14 @@ use NodeType::*;
 type ChildrenType = IndexMap<PathBuf, NodeType>;
 type CrawlResultType = tokio::io::Result<ChildrenType>;
 
+#[derive(Debug)]
 enum NodeType {
     Nothing,
     Pending,
     Full(DirNode),
 }
 
+#[derive(Debug)]
 struct DirNode {
     children: ChildrenType
 }
@@ -44,7 +46,7 @@ async fn get_children(path: PathBuf) -> CrawlResultType {
 
 
 async fn random_walk(path_: &str) {
-    let task_queue : FuturesUnordered<JoinHandle<CrawlResultType>> = FuturesUnordered::new();
+    let mut task_queue : FuturesUnordered<JoinHandle<CrawlResultType>> = FuturesUnordered::new();
     let mut current = NodeType::Nothing;
     let path: PathBuf = PathBuf::from(path_);
     loop {
@@ -53,6 +55,7 @@ async fn random_walk(path_: &str) {
                 // spawn
                 let task = tokio::spawn(get_children(path.clone()));
                 task_queue.push(task);
+                current = NodeType::Pending;
             }
             Pending => { break; }
             Full(node) => {
@@ -65,6 +68,9 @@ async fn random_walk(path_: &str) {
                 }
             }
         }
+    }
+    if let Some(Ok(children)) = task_queue.next().await {
+        println!("{:?}", children);
     }
 }
 

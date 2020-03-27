@@ -51,6 +51,7 @@ async fn random_walk(path_: &str) {
                     let task = tokio::spawn(get_children(path.clone()));
                     task_queue.push(task);
                     nodes.insert(path.clone(), RefCell::new(NodeType::Pending));
+                    continue 'outer;
                 }
                 Some(cell)  => {
                     let node = &mut *cell.borrow_mut();

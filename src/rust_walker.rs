@@ -3,6 +3,7 @@ extern crate rand;
 use rand::thread_rng;
 use rand::Rng;
 use std::env;
+use std::cell::RefCell;
 use futures::stream::futures_unordered::FuturesUnordered;
 use std::collections::HashMap;
 use futures::stream::StreamExt;
@@ -38,43 +39,51 @@ async fn get_children(path: PathBuf) -> CrawlResultType {
 
 async fn random_walk(path_: &str) {
     let mut task_queue: FuturesUnordered<JoinHandle<CrawlResultType>> = FuturesUnordered::new();
-    let mut nodes: HashMap<PathBuf, NodeType> = HashMap::new();
+    let mut nodes: HashMap<PathBuf, RefCell<NodeType>> = HashMap::new();
     loop {
         let mut path: PathBuf = PathBuf::from(path_);
         loop {
-            let &mut node = &mut nodes.get_mut(&path);
+            let node = nodes.get(&path);
             match node {
                 None => {
                     // spawn
                     let task = tokio::spawn(get_children(path.clone()));
                     task_queue.push(task);
-                    nodes.insert(path.clone(), NodeType::Pending);
+                    nodes.insert(path.clone(), RefCell::new(NodeType::Pending));
                 }
-                Some(NodeType::Pending) => {
-                    break;
-                }
-                Some(NodeType::Empty) => {
-                    panic!("Should not have descended onto empty node!");
-                    // break; // FIXME shouldn't get here
-                }
-                Some(NodeType::Full(children)) => {
-                    // descend
-                    let child_idx;
-                    {
-                        let mut rng = thread_rng();
-                        child_idx = rng.gen_range(0, children.len());
-                        let current_path = &children[child_idx];
-                        match nodes.get(current_path) {
-                            None => {}
-                            Some(NodeType::Empty) => {
-                                children.swap_remove(child_idx);
+                Some(cell)  => {
+                    match &mut *cell.borrow_mut() {
+                        NodeType::Pending => {
+                            break;
+                        }
+                        NodeType::Empty => {
+                            panic!("Should not have descended onto empty node!");
+                            // break; // FIXME shouldn't get here
+                        }
+                        NodeType::Full(children) => {
+                            // descend
+                            let child_idx;
+                            {
+                                let mut rng = thread_rng();
+                                child_idx = rng.gen_range(0, children.len());
+                                let current_path = &children[child_idx];
+                                match nodes.get(current_path) {
+                                    None => {}
+                                    Some(cell) => {
+                                        match &*cell.borrow() {
+                                            NodeType::Empty => {
+                                                children.swap_remove(child_idx);
+                                            }
+                                            NodeType::Pending => { break; }
+                                            NodeType::Full(_) => {
+                                                path = current_path.clone();
+                                                break;
+                                            }
+                                        }
+                                    }
+                                };
                             }
-                            Some(NodeType::Pending) => { break; }
-                            Some(NodeType::Full(_)) => {
-                                path = current_path.clone();
-                                break;
-                            }
-                        };
+                        }
                     }
                 }
             }
@@ -82,9 +91,9 @@ async fn random_walk(path_: &str) {
         if let Some(Ok(Ok((path, children)))) = task_queue.next().await {
             // Update entry
             if children.len() == 0 {
-                nodes.insert(path, NodeType::Empty);
+                nodes.insert(path, RefCell::new(NodeType::Empty));
             } else {
-                nodes.insert(path, NodeType::Full(children));
+                nodes.insert(path, RefCell::new(NodeType::Full(children)));
             }
         } else {
             // If nothing in queue. FIXME handle crawling errors

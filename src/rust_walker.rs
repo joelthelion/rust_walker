@@ -41,10 +41,9 @@ async fn random_walk(path_: &str) {
     let mut task_queue: FuturesUnordered<JoinHandle<CrawlResultType>> = FuturesUnordered::new();
     let mut nodes: HashMap<PathBuf, RefCell<NodeType>> = HashMap::new();
     let orig_path: PathBuf = PathBuf::from(path_);
-    loop {
+    'outer: loop {
         let mut path: PathBuf = orig_path.clone();
         'descend: loop {
-            // eprintln!("Descend: {}", path.display());
             let maybe_node = nodes.get(&path);
             match maybe_node {
                 None => {
@@ -73,9 +72,8 @@ async fn random_walk(path_: &str) {
                                             *node = NodeType::Empty;
                                             break 'descend;
                                         } else {
-                                            path = orig_path.clone();
                                             *node = NodeType::Empty;
-                                            continue 'descend;
+                                            continue 'outer;
                                         }
                                     }
                                     let child_idx;
@@ -89,7 +87,6 @@ async fn random_walk(path_: &str) {
                                         Some(cell) => {
                                             match &*cell.borrow() {
                                                 NodeType::Empty => {
-                                                    println!("{}", current_path.display());
                                                     children.swap_remove(child_idx);
                                                 }
                                                 NodeType::Pending => { break 'descend; }
@@ -116,6 +113,7 @@ async fn random_walk(path_: &str) {
                 Ok((path, children)) => {
                     // Update entry
                     if children.len() == 0 {
+                        println!("{}", path.display());
                         nodes.insert(path, RefCell::new(NodeType::Empty));
                     } else {
                         nodes.insert(path, RefCell::new(NodeType::Full(children)));

@@ -1,12 +1,12 @@
 extern crate rand;
 
+use futures::stream::futures_unordered::FuturesUnordered;
+use futures::stream::StreamExt;
 use rand::thread_rng;
 use rand::Rng;
-use std::env;
 use std::cell::RefCell;
-use futures::stream::futures_unordered::FuturesUnordered;
 use std::collections::HashMap;
-use futures::stream::StreamExt;
+use std::env;
 use std::path::PathBuf;
 use std::vec::Vec;
 use tokio::task::JoinHandle;
@@ -53,7 +53,7 @@ async fn random_walk(path_: &str) {
                     nodes.insert(path.clone(), RefCell::new(NodeType::Pending));
                     continue 'outer;
                 }
-                Some(cell)  => {
+                Some(cell) => {
                     let node = &mut *cell.borrow_mut();
                     match node {
                         NodeType::Pending => {
@@ -64,41 +64,39 @@ async fn random_walk(path_: &str) {
                             panic!("Should not have descended onto empty node!");
                         }
                         NodeType::Full(children) => {
-                            {
-                                let mut rng = thread_rng();
-                                loop {
-                                    if children.is_empty() {
-                                        println!("{}", path.display());
-                                        if path == orig_path {
-                                            *node = NodeType::Empty;
-                                            break 'descend;
-                                        } else {
-                                            *node = NodeType::Empty;
-                                            continue 'outer;
-                                        }
+                            let mut rng = thread_rng();
+                            loop {
+                                if children.is_empty() {
+                                    println!("{}", path.display());
+                                    if path == orig_path {
+                                        *node = NodeType::Empty;
+                                        break 'descend;
+                                    } else {
+                                        *node = NodeType::Empty;
+                                        continue 'outer;
                                     }
-                                    let child_idx;
-                                    child_idx = rng.gen_range(0, children.len());
-                                    let current_path = &children[child_idx];
-                                    match nodes.get(current_path) {
-                                        None => {
+                                }
+                                let child_idx;
+                                child_idx = rng.gen_range(0, children.len());
+                                let current_path = &children[child_idx];
+                                match nodes.get(current_path) {
+                                    None => {
+                                        path = current_path.clone();
+                                        continue 'descend;
+                                    }
+                                    Some(cell) => match &*cell.borrow() {
+                                        NodeType::Empty => {
+                                            children.swap_remove(child_idx);
+                                        }
+                                        NodeType::Pending => {
+                                            break 'descend;
+                                        }
+                                        NodeType::Full(_) => {
                                             path = current_path.clone();
                                             continue 'descend;
                                         }
-                                        Some(cell) => {
-                                            match &*cell.borrow() {
-                                                NodeType::Empty => {
-                                                    children.swap_remove(child_idx);
-                                                }
-                                                NodeType::Pending => { break 'descend; }
-                                                NodeType::Full(_) => {
-                                                    path = current_path.clone();
-                                                    continue 'descend;
-                                                }
-                                            }
-                                        }
-                                    }
-                                };
+                                    },
+                                }
                             }
                         }
                     }

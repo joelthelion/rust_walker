@@ -3,11 +3,9 @@ extern crate rand;
 use rand::thread_rng;
 use rand::Rng;
 use std::env;
-// use std::option::Option;
-use futures::future::{Future, FutureExt};
 use futures::stream::futures_unordered::FuturesUnordered;
-use futures::stream::{Stream, StreamExt};
 use std::collections::HashMap;
+use futures::stream::StreamExt;
 use std::path::PathBuf;
 use std::vec::Vec;
 use tokio::task::JoinHandle;
@@ -44,7 +42,8 @@ async fn random_walk(path_: &str) {
     loop {
         let mut path: PathBuf = PathBuf::from(path_);
         loop {
-            match nodes.get(&path) {
+            let &mut node = &mut nodes.get_mut(&path);
+            match node {
                 None => {
                     // spawn
                     let task = tokio::spawn(get_children(path.clone()));
@@ -55,15 +54,27 @@ async fn random_walk(path_: &str) {
                     break;
                 }
                 Some(NodeType::Empty) => {
-                    break;
-                } // FIXME shouldn't get here
+                    panic!("Should not have descended onto empty node!");
+                    // break; // FIXME shouldn't get here
+                }
                 Some(NodeType::Full(children)) => {
                     // descend
                     let child_idx;
                     {
                         let mut rng = thread_rng();
                         child_idx = rng.gen_range(0, children.len());
-                        path = children[child_idx].clone();
+                        let current_path = &children[child_idx];
+                        match nodes.get(current_path) {
+                            None => {}
+                            Some(NodeType::Empty) => {
+                                children.swap_remove(child_idx);
+                            }
+                            Some(NodeType::Pending) => { break; }
+                            Some(NodeType::Full(_)) => {
+                                path = current_path.clone();
+                                break;
+                            }
+                        };
                     }
                 }
             }

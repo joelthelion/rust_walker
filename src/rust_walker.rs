@@ -40,11 +40,12 @@ async fn get_children(path: PathBuf) -> CrawlResultType {
 async fn random_walk(path_: &str) {
     let mut task_queue: FuturesUnordered<JoinHandle<CrawlResultType>> = FuturesUnordered::new();
     let mut nodes: HashMap<PathBuf, RefCell<NodeType>> = HashMap::new();
+    let orig_path: PathBuf = PathBuf::from(path_);
     loop {
-        let mut path: PathBuf = PathBuf::from(path_);
-        loop {
-            let node = nodes.get(&path);
-            match node {
+        let mut path: PathBuf = orig_path.clone();
+        'descend: loop {
+            let maybe_node = nodes.get(&path);
+            match maybe_node {
                 None => {
                     // spawn
                     let task = tokio::spawn(get_children(path.clone()));
@@ -52,32 +53,43 @@ async fn random_walk(path_: &str) {
                     nodes.insert(path.clone(), RefCell::new(NodeType::Pending));
                 }
                 Some(cell)  => {
-                    match &mut *cell.borrow_mut() {
+                    let node = &mut *cell.borrow_mut();
+                    match node {
                         NodeType::Pending => {
                             break;
                         }
                         NodeType::Empty => {
+                            println!("panic: {:?}", path);
                             panic!("Should not have descended onto empty node!");
-                            // break; // FIXME shouldn't get here
                         }
                         NodeType::Full(children) => {
-                            // descend
-                            let child_idx;
                             {
                                 let mut rng = thread_rng();
-                                child_idx = rng.gen_range(0, children.len());
-                                let current_path = &children[child_idx];
-                                match nodes.get(current_path) {
-                                    None => {}
-                                    Some(cell) => {
-                                        match &*cell.borrow() {
-                                            NodeType::Empty => {
-                                                children.swap_remove(child_idx);
-                                            }
-                                            NodeType::Pending => { break; }
-                                            NodeType::Full(_) => {
-                                                path = current_path.clone();
-                                                break;
+                                loop {
+                                    if children.is_empty() {
+                                        println!("{}", path.display());
+                                        *node = NodeType::Empty;
+                                        break 'descend;
+                                    }
+                                    let child_idx;
+                                    child_idx = rng.gen_range(0, children.len());
+                                    let current_path = &children[child_idx];
+                                    match nodes.get(current_path) {
+                                        None => {
+                                            path = current_path.clone();
+                                            continue 'descend;
+                                        }
+                                        Some(cell) => {
+                                            match &*cell.borrow() {
+                                                NodeType::Empty => {
+                                                    println!("{}", current_path.display());
+                                                    children.swap_remove(child_idx);
+                                                }
+                                                NodeType::Pending => { break 'descend; }
+                                                NodeType::Full(_) => {
+                                                    path = current_path.clone();
+                                                    continue 'descend;
+                                                }
                                             }
                                         }
                                     }

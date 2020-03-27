@@ -44,6 +44,7 @@ async fn random_walk(path_: &str) {
     loop {
         let mut path: PathBuf = orig_path.clone();
         'descend: loop {
+            // eprintln!("Descend: {}", path.display());
             let maybe_node = nodes.get(&path);
             match maybe_node {
                 None => {
@@ -68,8 +69,14 @@ async fn random_walk(path_: &str) {
                                 loop {
                                     if children.is_empty() {
                                         println!("{}", path.display());
-                                        *node = NodeType::Empty;
-                                        break 'descend;
+                                        if path == orig_path {
+                                            *node = NodeType::Empty;
+                                            break 'descend;
+                                        } else {
+                                            path = orig_path.clone();
+                                            *node = NodeType::Empty;
+                                            continue 'descend;
+                                        }
                                     }
                                     let child_idx;
                                     child_idx = rng.gen_range(0, children.len());
@@ -100,15 +107,23 @@ async fn random_walk(path_: &str) {
                 }
             }
         }
-        if let Some(Ok(Ok((path, children)))) = task_queue.next().await {
-            // Update entry
-            if children.len() == 0 {
-                nodes.insert(path, RefCell::new(NodeType::Empty));
-            } else {
-                nodes.insert(path, RefCell::new(NodeType::Full(children)));
-            }
+        if let Some(join_result) = task_queue.next().await {
+            let crawl_result = join_result.unwrap();
+            match crawl_result {
+                Err(err) => {
+                    eprintln!("Crawling error: {}", err);
+                }
+                Ok((path, children)) => {
+                    // Update entry
+                    if children.len() == 0 {
+                        nodes.insert(path, RefCell::new(NodeType::Empty));
+                    } else {
+                        nodes.insert(path, RefCell::new(NodeType::Full(children)));
+                    }
+                }
+            };
         } else {
-            // If nothing in queue. FIXME handle crawling errors
+            // If nothing in queue, we should be done
             break;
         }
     }

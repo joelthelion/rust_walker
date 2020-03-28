@@ -1,4 +1,4 @@
-/// Asynchronous randomized large filesystem explorer
+//! Asynchronous randomized large filesystem explorer
 extern crate rand;
 
 use futures::stream::futures_unordered::FuturesUnordered;
@@ -12,9 +12,21 @@ use std::path::PathBuf;
 use std::vec::Vec;
 use tokio::task::JoinHandle;
 
+/// Node status for the main tree.
+/// * Pending: waiting for asynchronous directory listing to complete
+/// * Empty: either originally empty or entirely processed
+/// * Full: ready for exploration
+#[derive(Debug)]
+enum NodeType {
+    Pending,
+    Empty,
+    Full(ChildrenType),
+}
 
 struct Walker {
+    /// Unordered task queue for directory listing jobs
     task_queue: FuturesUnordered<JoinHandle<CrawlResultType>>,
+    /// Visited paths and their status
     nodes: HashMap<PathBuf, RefCell<NodeType>>,
 }
 
@@ -143,6 +155,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 type ChildrenType = Vec<PathBuf>;
 type CrawlResultType = tokio::io::Result<(PathBuf, ChildrenType)>;
 
+/// Asynchronously list a directory, print files, and return child directories
 async fn get_children(path: PathBuf) -> CrawlResultType {
     let mut children = Vec::new();
     let mut entries = tokio::fs::read_dir(&path).await?;
@@ -157,11 +170,4 @@ async fn get_children(path: PathBuf) -> CrawlResultType {
         }
     }
     Ok((path, children))
-}
-
-#[derive(Debug)]
-enum NodeType {
-    Pending,
-    Empty,
-    Full(ChildrenType),
 }

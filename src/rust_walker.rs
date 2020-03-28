@@ -71,8 +71,7 @@ impl Walker {
                                 return;
                             }
                             NodeType::Empty => {
-                                println!("panic: {:?}", path);
-                                panic!("Should not have descended onto empty node!");
+                                return; // can happen when the root node is empty
                             }
                             NodeType::Full(children) => {
                                 let mut rng = thread_rng();

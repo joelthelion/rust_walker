@@ -129,7 +129,7 @@ async fn random_walk(path_: &str) {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
-    let dir = if args.len() >= 2 { &args[1] } else { "." };
+    let dir = if args.len() >= 2 { &args[1] } else { "./" };
     random_walk(dir).await;
     Ok(())
 }

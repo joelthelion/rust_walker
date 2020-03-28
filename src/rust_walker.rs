@@ -14,13 +14,6 @@ use tokio::task::JoinHandle;
 type ChildrenType = Vec<PathBuf>;
 type CrawlResultType = tokio::io::Result<(PathBuf, ChildrenType)>;
 
-#[derive(Debug)]
-enum NodeType {
-    Pending,
-    Empty,
-    Full(ChildrenType),
-}
-
 async fn get_children(path: PathBuf) -> CrawlResultType {
     let mut children = Vec::new();
     let mut entries = tokio::fs::read_dir(&path).await?;
@@ -37,65 +30,91 @@ async fn get_children(path: PathBuf) -> CrawlResultType {
     Ok((path, children))
 }
 
-async fn random_walk(path_: &str) {
-    let mut task_queue: FuturesUnordered<JoinHandle<CrawlResultType>> = FuturesUnordered::new();
-    let mut nodes: HashMap<PathBuf, RefCell<NodeType>> = HashMap::new();
-    let orig_path: PathBuf = PathBuf::from(path_);
-    'outer: loop {
-        let mut path: PathBuf = orig_path.clone();
-        'descend: loop {
-            let maybe_node = nodes.get(&path);
-            match maybe_node {
-                None => {
-                    // spawn
-                    let task = tokio::spawn(get_children(path.clone()));
-                    task_queue.push(task);
-                    nodes.insert(path.clone(), RefCell::new(NodeType::Pending));
-                    continue 'outer;
-                }
-                Some(cell) => {
-                    let node = &mut *cell.borrow_mut();
-                    match node {
-                        NodeType::Pending => {
-                            break;
-                        }
-                        NodeType::Empty => {
-                            println!("panic: {:?}", path);
-                            panic!("Should not have descended onto empty node!");
-                        }
-                        NodeType::Full(children) => {
-                            let mut rng = thread_rng();
-                            loop {
-                                if children.is_empty() {
-                                    println!("{}", path.display());
-                                    if path == orig_path {
-                                        *node = NodeType::Empty;
-                                        break 'descend;
-                                    } else {
-                                        *node = NodeType::Empty;
-                                        continue 'outer;
-                                    }
-                                }
-                                let child_idx;
-                                child_idx = rng.gen_range(0, children.len());
-                                let current_path = &children[child_idx];
-                                match nodes.get(current_path) {
-                                    None => {
-                                        path = current_path.clone();
-                                        continue 'descend;
-                                    }
-                                    Some(cell) => match &*cell.borrow() {
-                                        NodeType::Empty => {
-                                            children.swap_remove(child_idx);
+#[derive(Debug)]
+enum NodeType {
+    Pending,
+    Empty,
+    Full(ChildrenType),
+}
+
+struct Walker {
+    task_queue: FuturesUnordered<JoinHandle<CrawlResultType>>,
+    nodes: HashMap<PathBuf, RefCell<NodeType>>,
+}
+
+impl Walker {
+    fn new() -> Walker {
+        Walker {
+            task_queue: FuturesUnordered::new(),
+            nodes: HashMap::new(),
+        }
+    }
+    async fn walk(&mut self, path: &PathBuf) {
+        loop {
+            self.walk_until_pending(path);
+            if !self.process_one_task().await {
+                break;
+            }
+        }
+    }
+    fn walk_until_pending(&mut self, orig_path: &PathBuf) {
+        'outer: loop {
+            let mut path = orig_path.clone();
+            'descend: loop {
+                let maybe_node = self.nodes.get(&path);
+                match maybe_node {
+                    None => {
+                        // spawn
+                        let task = tokio::spawn(get_children(path.clone()));
+                        self.task_queue.push(task);
+                        self.nodes
+                            .insert(path.clone(), RefCell::new(NodeType::Pending));
+                        continue 'outer;
+                    }
+                    Some(cell) => {
+                        let node = &mut *cell.borrow_mut();
+                        match node {
+                            NodeType::Pending => {
+                                return;
+                            }
+                            NodeType::Empty => {
+                                println!("panic: {:?}", path);
+                                panic!("Should not have descended onto empty node!");
+                            }
+                            NodeType::Full(children) => {
+                                let mut rng = thread_rng();
+                                loop {
+                                    if children.is_empty() {
+                                        println!("{}", path.display());
+                                        if path == *orig_path {
+                                            *node = NodeType::Empty;
+                                            return;
+                                        } else {
+                                            *node = NodeType::Empty;
+                                            continue 'outer;
                                         }
-                                        NodeType::Pending => {
-                                            break 'descend;
-                                        }
-                                        NodeType::Full(_) => {
+                                    }
+                                    let child_idx;
+                                    child_idx = rng.gen_range(0, children.len());
+                                    let current_path = &children[child_idx];
+                                    match self.nodes.get(current_path) {
+                                        None => {
                                             path = current_path.clone();
                                             continue 'descend;
                                         }
-                                    },
+                                        Some(cell) => match &*cell.borrow() {
+                                            NodeType::Empty => {
+                                                children.swap_remove(child_idx);
+                                            }
+                                            NodeType::Pending => {
+                                                return;
+                                            }
+                                            NodeType::Full(_) => {
+                                                path = current_path.clone();
+                                                continue 'descend;
+                                            }
+                                        },
+                                    }
                                 }
                             }
                         }
@@ -103,7 +122,9 @@ async fn random_walk(path_: &str) {
                 }
             }
         }
-        if let Some(join_result) = task_queue.next().await {
+    }
+    async fn process_one_task(&mut self) -> bool {
+        if let Some(join_result) = self.task_queue.next().await {
             let crawl_result = join_result.unwrap();
             match crawl_result {
                 Err(err) => {
@@ -113,23 +134,26 @@ async fn random_walk(path_: &str) {
                     // Update entry
                     if children.len() == 0 {
                         println!("{}", path.display());
-                        nodes.insert(path, RefCell::new(NodeType::Empty));
+                        self.nodes.insert(path, RefCell::new(NodeType::Empty));
                     } else {
-                        nodes.insert(path, RefCell::new(NodeType::Full(children)));
+                        self.nodes
+                            .insert(path, RefCell::new(NodeType::Full(children)));
                     }
                 }
             };
+            true
         } else {
             // If nothing in queue, we should be done
-            break;
+            false
         }
     }
 }
 
-#[tokio::main(max_threads=12)]
+#[tokio::main(max_threads = 12)]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
-    let dir = if args.len() >= 2 { &args[1] } else { "./" };
-    random_walk(dir).await;
+    let dir = PathBuf::from(if args.len() >= 2 { &args[1] } else { "./" });
+    let mut walker = Walker::new();
+    walker.walk(&dir).await;
     Ok(())
 }

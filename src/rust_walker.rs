@@ -1,3 +1,4 @@
+/// Asynchronous randomized large filesystem explorer
 extern crate rand;
 
 use futures::stream::futures_unordered::FuturesUnordered;
@@ -11,31 +12,6 @@ use std::path::PathBuf;
 use std::vec::Vec;
 use tokio::task::JoinHandle;
 
-type ChildrenType = Vec<PathBuf>;
-type CrawlResultType = tokio::io::Result<(PathBuf, ChildrenType)>;
-
-async fn get_children(path: PathBuf) -> CrawlResultType {
-    let mut children = Vec::new();
-    let mut entries = tokio::fs::read_dir(&path).await?;
-    while let Some(i_) = entries.next().await {
-        let i = i_?;
-        let is_symlink = i.file_type().await?.is_symlink();
-        let path = i.path();
-        if !is_symlink && path.is_dir() {
-            children.push(path);
-        } else {
-            println!("{}", path.display());
-        }
-    }
-    Ok((path, children))
-}
-
-#[derive(Debug)]
-enum NodeType {
-    Pending,
-    Empty,
-    Full(ChildrenType),
-}
 
 struct Walker {
     task_queue: FuturesUnordered<JoinHandle<CrawlResultType>>,
@@ -43,20 +19,25 @@ struct Walker {
 }
 
 impl Walker {
+    /// Create a new random walker
     fn new() -> Walker {
         Walker {
             task_queue: FuturesUnordered::new(),
             nodes: HashMap::new(),
         }
     }
+    /// Randomly walk through a directory until all paths are traversed
     async fn walk(&mut self, path: &PathBuf) {
         loop {
+            // Sample directories while we can
             self.walk_until_pending(path);
+            // Retrieve the output of one task and update the tree
             if !self.process_one_task().await {
                 break;
             }
         }
     }
+    /// Repeatedly descend through the tree until we reach a pending node
     fn walk_until_pending(&mut self, orig_path: &PathBuf) {
         'outer: loop {
             let mut path = orig_path.clone();
@@ -123,6 +104,7 @@ impl Walker {
             }
         }
     }
+    /// Retrieve the output of one task and update the tree
     async fn process_one_task(&mut self) -> bool {
         if let Some(join_result) = self.task_queue.next().await {
             let crawl_result = join_result.unwrap();
@@ -156,4 +138,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut walker = Walker::new();
     walker.walk(&dir).await;
     Ok(())
+}
+
+type ChildrenType = Vec<PathBuf>;
+type CrawlResultType = tokio::io::Result<(PathBuf, ChildrenType)>;
+
+async fn get_children(path: PathBuf) -> CrawlResultType {
+    let mut children = Vec::new();
+    let mut entries = tokio::fs::read_dir(&path).await?;
+    while let Some(i_) = entries.next().await {
+        let i = i_?;
+        let is_symlink = i.file_type().await?.is_symlink();
+        let path = i.path();
+        if !is_symlink && path.is_dir() {
+            children.push(path);
+        } else {
+            println!("{}", path.display());
+        }
+    }
+    Ok((path, children))
+}
+
+#[derive(Debug)]
+enum NodeType {
+    Pending,
+    Empty,
+    Full(ChildrenType),
 }

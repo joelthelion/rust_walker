@@ -1,3 +1,4 @@
+/// Slow synchronous randomized walker
 extern crate rand;
 
 use rand::thread_rng;

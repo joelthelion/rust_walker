@@ -26,7 +26,6 @@ enum NodeType {
 enum TaskOutput {
     DirEntry((PathBuf, tokio::fs::ReadDir)),
     Child((PathBuf, tokio::fs::ReadDir, PathBuf)),
-    FullDirectory((PathBuf, Vec<PathBuf>)),
     Nothing,
 }
 
@@ -133,16 +132,6 @@ impl Walker {
                 }
                 Ok(task_output) => {
                     match task_output {
-                        TaskOutput::FullDirectory((path, children)) => {
-                            // Update entry
-                            if children.len() == 0 {
-                                println!("{}", path.display());
-                                self.nodes.insert(path, RefCell::new(NodeType::Empty));
-                            } else {
-                                self.nodes
-                                    .insert(path, RefCell::new(NodeType::Full(children)));
-                            }
-                        }
                         TaskOutput::DirEntry((path, entries)) => {
                             let task = tokio::spawn(get_next_child(path, entries));
                             self.task_queue.push(task);
@@ -196,27 +185,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 type ChildrenType = Vec<PathBuf>;
-type CrawlResultType = tokio::io::Result<(PathBuf, ChildrenType)>;
 
-/// Asynchronously list a directory, print files, and return child directories
-async fn get_children(path: PathBuf) -> tokio::io::Result<TaskOutput> {
-    let mut children = Vec::new();
-    let mut entries = tokio::fs::read_dir(&path).await?;
-    while let Some(i_) = entries.next().await {
-        let i = i_?;
-        let is_symlink = i.file_type().await?.is_symlink();
-        let path = i.path();
-        if !is_symlink && path.is_dir() {
-            children.push(path);
-        } else {
-            println!("{}", path.display());
-        }
-    }
-    Ok(TaskOutput::FullDirectory((path, children)))
-}
 
 async fn read_dir(path: PathBuf) -> tokio::io::Result<TaskOutput> {
-    let mut entries = tokio::fs::read_dir(&path).await?;
+    let entries = tokio::fs::read_dir(&path).await?;
     Ok(TaskOutput::DirEntry((path, entries)))
 }
 
@@ -227,10 +199,10 @@ async fn get_next_child(path: PathBuf, mut entries: tokio::fs::ReadDir) -> tokio
             Some(entry) => {
                 let is_symlink = entry.file_type().await?.is_symlink();
                 let child = entry.path();
-                if !is_symlink && path.is_dir() {
+                if !is_symlink && child.is_dir() {
                     Ok(TaskOutput::Child((path, entries, child)))
                 } else {
-                    println!("{}", path.display());
+                    println!("{}", child.display());
                     continue
                 }
             }

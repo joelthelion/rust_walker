@@ -23,9 +23,16 @@ enum NodeType {
     Full(ChildrenType),
 }
 
+enum TaskOutput {
+    DirEntry((PathBuf, tokio::fs::ReadDir)),
+    Child((PathBuf, tokio::fs::ReadDir, PathBuf)),
+    FullDirectory((PathBuf, Vec<PathBuf>)),
+    Nothing,
+}
+
 struct Walker {
     /// Unordered task queue for directory listing jobs
-    task_queue: FuturesUnordered<JoinHandle<CrawlResultType>>,
+    task_queue: FuturesUnordered<JoinHandle<tokio::io::Result<TaskOutput>>>,
     /// Visited paths and their status
     nodes: HashMap<PathBuf, RefCell<NodeType>>,
 }
@@ -58,7 +65,7 @@ impl Walker {
                 match maybe_node {
                     None => {
                         // spawn
-                        let task = tokio::spawn(get_children(path.clone()));
+                        let task = tokio::spawn(read_dir(path.clone()));
                         self.task_queue.push(task);
                         self.nodes
                             .insert(path.clone(), RefCell::new(NodeType::Pending));
@@ -124,14 +131,50 @@ impl Walker {
                 Err(err) => {
                     eprintln!("Crawling error: {}", err);
                 }
-                Ok((path, children)) => {
-                    // Update entry
-                    if children.len() == 0 {
-                        println!("{}", path.display());
-                        self.nodes.insert(path, RefCell::new(NodeType::Empty));
-                    } else {
-                        self.nodes
-                            .insert(path, RefCell::new(NodeType::Full(children)));
+                Ok(task_output) => {
+                    match task_output {
+                        TaskOutput::FullDirectory((path, children)) => {
+                            // Update entry
+                            if children.len() == 0 {
+                                println!("{}", path.display());
+                                self.nodes.insert(path, RefCell::new(NodeType::Empty));
+                            } else {
+                                self.nodes
+                                    .insert(path, RefCell::new(NodeType::Full(children)));
+                            }
+                        }
+                        TaskOutput::DirEntry((path, entries)) => {
+                            let task = tokio::spawn(get_next_child(path, entries));
+                            self.task_queue.push(task);
+                        }
+                        TaskOutput::Child((node_path, entries, child_path)) => {
+                            match self.nodes.get(&node_path) {
+                                Some(cell) => {
+                                    let mut node = cell.borrow_mut();
+                                    match &mut *node {
+                                        NodeType::Pending => {
+                                            let mut children = Vec::new();
+                                            children.push(child_path);
+                                            *node = NodeType::Full(children);
+                                        }
+                                        NodeType::Full(children) => {
+                                            children.push(child_path);
+                                        }
+                                        NodeType::Empty => {
+                                            panic!("Nodes should not be marked as empty before they are fully processed")
+                                        }
+                                    }
+                                }
+                                None => {
+                                    panic!("Should be pending or full")
+                                }
+                            }
+                            let next_task = tokio::spawn(get_next_child(node_path, entries));
+                            self.task_queue.push(next_task);
+                        }
+                        TaskOutput::Nothing => {
+                            println!("Nothing left to do for this job!!");
+                        }
                     }
                 }
             };
@@ -156,7 +199,7 @@ type ChildrenType = Vec<PathBuf>;
 type CrawlResultType = tokio::io::Result<(PathBuf, ChildrenType)>;
 
 /// Asynchronously list a directory, print files, and return child directories
-async fn get_children(path: PathBuf) -> CrawlResultType {
+async fn get_children(path: PathBuf) -> tokio::io::Result<TaskOutput> {
     let mut children = Vec::new();
     let mut entries = tokio::fs::read_dir(&path).await?;
     while let Some(i_) = entries.next().await {
@@ -169,5 +212,29 @@ async fn get_children(path: PathBuf) -> CrawlResultType {
             println!("{}", path.display());
         }
     }
-    Ok((path, children))
+    Ok(TaskOutput::FullDirectory((path, children)))
+}
+
+async fn read_dir(path: PathBuf) -> tokio::io::Result<TaskOutput> {
+    let mut entries = tokio::fs::read_dir(&path).await?;
+    Ok(TaskOutput::DirEntry((path, entries)))
+}
+
+async fn get_next_child(path: PathBuf, mut entries: tokio::fs::ReadDir) -> tokio::io::Result<TaskOutput>
+{
+    loop {
+        return match entries.next_entry().await? {
+            Some(entry) => {
+                let is_symlink = entry.file_type().await?.is_symlink();
+                let child = entry.path();
+                if !is_symlink && path.is_dir() {
+                    Ok(TaskOutput::Child((path, entries, child)))
+                } else {
+                    println!("{}", path.display());
+                    continue
+                }
+            }
+            None => Ok(TaskOutput::Nothing)
+        }
+    }
 }

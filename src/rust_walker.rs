@@ -20,13 +20,14 @@ use tokio::task::JoinHandle;
 enum NodeType {
     Pending,
     Empty,
+    Partial(ChildrenType),
     Full(ChildrenType),
 }
 
 enum TaskOutput {
     DirEntry((PathBuf, tokio::fs::ReadDir)),
     Child((PathBuf, tokio::fs::ReadDir, PathBuf)),
-    Nothing,
+    Nothing(PathBuf),
 }
 
 struct Walker {
@@ -72,26 +73,30 @@ impl Walker {
                     }
                     Some(cell) => {
                         let node = &mut *cell.borrow_mut();
+                        let is_full = if let NodeType::Full(_) = node { true } else { false };
                         match node {
                             NodeType::Pending => {
                                 return;
                             }
                             NodeType::Empty => {
-                                println!("panic: {:?}", path);
-                                panic!("Should not have descended onto empty node!");
+                                assert_eq!(path, *orig_path);
+                                println!("descend onto empty {}", path.display());
+                                return;
                             }
-                            NodeType::Full(children) => {
+                            NodeType::Full(children) | NodeType::Partial(children) => {
                                 let mut rng = thread_rng();
                                 loop {
                                     if children.is_empty() {
-                                        println!("{}", path.display());
-                                        if path == *orig_path {
-                                            *node = NodeType::Empty;
-                                            return;
-                                        } else {
-                                            *node = NodeType::Empty;
-                                            continue 'outer;
-                                        }
+                                        if is_full {
+                                            println!("{}", path.display());
+                                            if path == *orig_path {
+                                                *node = NodeType::Empty;
+                                                return;
+                                            } else {
+                                                *node = NodeType::Empty;
+                                                continue 'outer;
+                                            }
+                                        } else { return; }
                                     }
                                     let child_idx;
                                     child_idx = rng.gen_range(0, children.len());
@@ -108,7 +113,7 @@ impl Walker {
                                             NodeType::Pending => {
                                                 return;
                                             }
-                                            NodeType::Full(_) => {
+                                            NodeType::Full(_) | NodeType::Partial(_) => {
                                                 path = current_path.clone();
                                                 continue 'descend;
                                             }
@@ -144,9 +149,9 @@ impl Walker {
                                         NodeType::Pending => {
                                             let mut children = Vec::new();
                                             children.push(child_path);
-                                            *node = NodeType::Full(children);
+                                            *node = NodeType::Partial(children);
                                         }
-                                        NodeType::Full(children) => {
+                                        NodeType::Partial(children) | NodeType::Full(children) => {
                                             children.push(child_path);
                                         }
                                         NodeType::Empty => {
@@ -161,8 +166,15 @@ impl Walker {
                             let next_task = tokio::spawn(get_next_child(node_path, entries));
                             self.task_queue.push(next_task);
                         }
-                        TaskOutput::Nothing => {
-                            println!("Nothing left to do for this job!!");
+                        TaskOutput::Nothing(path) => {
+                            let cell = self.nodes.get(&path).unwrap();
+                            let node = cell.replace(NodeType::Empty);
+                            let new_node = match node {
+                                NodeType::Pending => NodeType::Full(Vec::new()),
+                                NodeType::Partial(children) => NodeType::Full(children),
+                                _ => panic!()
+                            };
+                            cell.replace(new_node);
                         }
                     }
                 }
@@ -176,37 +188,37 @@ impl Walker {
 }
 
 #[tokio::main(max_threads = 12)]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = env::args().collect();
-    let dir = PathBuf::from(if args.len() >= 2 { &args[1] } else { "./" });
-    let mut walker = Walker::new();
-    walker.walk(&dir).await;
-    Ok(())
-}
+    async fn main() -> Result<(), Box<dyn std::error::Error>> {
+        let args: Vec<String> = env::args().collect();
+        let dir = PathBuf::from(if args.len() >= 2 { &args[1] } else { "./" });
+        let mut walker = Walker::new();
+        walker.walk(&dir).await;
+        Ok(())
+    }
 
-type ChildrenType = Vec<PathBuf>;
+    type ChildrenType = Vec<PathBuf>;
 
 
-async fn read_dir(path: PathBuf) -> tokio::io::Result<TaskOutput> {
-    let entries = tokio::fs::read_dir(&path).await?;
-    Ok(TaskOutput::DirEntry((path, entries)))
-}
+    async fn read_dir(path: PathBuf) -> tokio::io::Result<TaskOutput> {
+        let entries = tokio::fs::read_dir(&path).await?;
+        Ok(TaskOutput::DirEntry((path, entries)))
+    }
 
-async fn get_next_child(path: PathBuf, mut entries: tokio::fs::ReadDir) -> tokio::io::Result<TaskOutput>
-{
-    loop {
-        return match entries.next_entry().await? {
-            Some(entry) => {
-                let is_symlink = entry.file_type().await?.is_symlink();
-                let child = entry.path();
-                if !is_symlink && child.is_dir() {
-                    Ok(TaskOutput::Child((path, entries, child)))
-                } else {
-                    println!("{}", child.display());
-                    continue
+    async fn get_next_child(path: PathBuf, mut entries: tokio::fs::ReadDir) -> tokio::io::Result<TaskOutput>
+    {
+        loop {
+            return match entries.next_entry().await? {
+                Some(entry) => {
+                    let is_symlink = entry.file_type().await?.is_symlink();
+                    let child = entry.path();
+                    if !is_symlink && child.is_dir() {
+                        Ok(TaskOutput::Child((path, entries, child)))
+                    } else {
+                        println!("{}", child.display());
+                        continue
+                    }
                 }
+                None => Ok(TaskOutput::Nothing(path))
             }
-            None => Ok(TaskOutput::Nothing)
         }
     }
-}

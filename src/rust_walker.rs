@@ -78,11 +78,7 @@ impl Walker {
                             NodeType::Pending => {
                                 return;
                             }
-                            NodeType::Empty => {
-                                assert_eq!(path, *orig_path);
-                                println!("descend onto empty {}", path.display());
-                                return;
-                            }
+                            NodeType::Empty => { panic!(); }
                             NodeType::Full(children) | NodeType::Partial(children) => {
                                 let mut rng = thread_rng();
                                 loop {
